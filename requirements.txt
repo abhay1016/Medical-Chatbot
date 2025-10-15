@@ -17,3 +17,4 @@ fastapi
 google_generativeai
 langchain_huggingface
 langchain_groq
+sentence-transformers
