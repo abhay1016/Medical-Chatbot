@@ -14,6 +14,6 @@ gunicorn
 langchain_google_genai
 uvicorn
 fastapi
-google-generativeai
-langchain-huggingface
+google_generativeai
+langchain_huggingface
 langchain_groq
