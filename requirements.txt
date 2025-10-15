@@ -18,3 +18,10 @@ google_generativeai
 langchain_huggingface
 langchain_groq
 sentence-transformers
+streamlit
+python-dotenv
+sentence-transformers==2.5.1
+langchain
+langchain-pinecone
+langchain-groq
+pypdf
