@@ -16,4 +16,4 @@ uvicorn
 fastapi
 google-generativeai
 langchain-huggingface
-langchain-groq
+langchain_groq
