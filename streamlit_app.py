@@ -29,8 +29,10 @@ if "chat_sessions" not in st.session_state:
     st.session_state.chat_counter = 0
 if "initialization_done" not in st.session_state:
     st.session_state.initialization_done = False
+if "lazy_load_triggered" not in st.session_state:
+    st.session_state.lazy_load_triggered = False
 
-# Custom CSS - Place AFTER set_page_config
+# Custom CSS
 st.markdown("""
 <style>
     .stApp {
@@ -82,136 +84,125 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         color: #1a1a1a;
     }
+    
+    .warning-box {
+        background: rgba(255, 152, 0, 0.1);
+        border-left: 4px solid #ff9800;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Pinecone with proper caching
-@st.cache_resource(show_spinner="🔧 Connecting to knowledge base...")
-def init_pinecone():
-    try:
-        return Pinecone(api_key=PINECONE_API_KEY)
-    except Exception as e:
-        st.error(f"Failed to initialize Pinecone: {str(e)}")
-        return None
-
-# Set up embeddings with optimized model
-@st.cache_resource(show_spinner="🧠 Loading AI model...")
-def load_embeddings():
-    try:
-        # Using faster, lighter model for better performance on Render
-        return HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},  # Force CPU for Render compatibility
-            encode_kwargs={'normalize_embeddings': True}
-        )
-    except Exception as e:
-        st.error(f"Failed to load embeddings: {str(e)}")
-        return None
-
-# Connect to vector store with caching
-@st.cache_resource(show_spinner="📚 Loading medical knowledge base...")
-def init_vectorstore(_embeddings, _pc):
-    try:
-        index_name = "medical-chatbot-index"
-        
-        # Check if index exists
-        if index_name not in _pc.list_indexes().names():
-            st.warning("⚠️ Creating new index. This is a one-time setup...")
-            _pc.create_index(
-                name=index_name,
-                dimension=384,
-                metric='cosine',
-                spec=ServerlessSpec(cloud='aws', region='us-east-1')
-            )
-            time.sleep(5)  # Wait for index to be ready
-        
-        return PineconeVectorStore(
-            index_name=index_name,
-            embedding=_embeddings,
-            pinecone_api_key=PINECONE_API_KEY
-        )
-    except Exception as e:
-        st.error(f"Failed to initialize vector store: {str(e)}")
-        return None
-
-# Load Groq model with caching
-@st.cache_resource(show_spinner="🚀 Initializing AI assistant...")
-def load_model():
-    try:
-        return ChatGroq(
-            groq_api_key=GROQ_API_KEY,
-            model_name="llama-3.3-70b-versatile",
-            temperature=0.7,
-            max_tokens=512
-        )
-    except Exception as e:
-        st.error(f"Failed to load LLM: {str(e)}")
-        return None
-
-# Initialize all components with progress tracking
-def initialize_app():
+# LAZY INITIALIZATION - Only load when needed
+def lazy_init_components():
+    """Initialize heavy components only when user sends first message"""
     if st.session_state.initialization_done:
-        return True
+        return st.session_state.qa_chain
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    if not st.session_state.lazy_load_triggered:
+        return None
     
-    try:
-        # Step 1: Initialize Pinecone
-        status_text.text("🔧 Connecting to database...")
-        progress_bar.progress(25)
-        pc = init_pinecone()
-        if pc is None:
-            return False
+    progress_container = st.empty()
+    
+    with progress_container.container():
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        # Step 2: Load embeddings
-        status_text.text("🧠 Loading AI model...")
-        progress_bar.progress(50)
-        embeddings = load_embeddings()
-        if embeddings is None:
-            return False
-        
-        # Step 3: Initialize vectorstore
-        status_text.text("📚 Loading knowledge base...")
-        progress_bar.progress(75)
-        vectorstore = init_vectorstore(embeddings, pc)
-        if vectorstore is None:
-            return False
-        
-        # Step 4: Load LLM
-        status_text.text("🚀 Finalizing setup...")
-        progress_bar.progress(90)
-        llm = load_model()
-        if llm is None:
-            return False
-        
-        # Create QA chain
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
-            return_source_documents=True
-        )
-        
-        # Store in session state
-        st.session_state.qa_chain = qa_chain
-        st.session_state.initialization_done = True
-        
-        progress_bar.progress(100)
-        status_text.text("✅ Ready!")
-        time.sleep(0.5)
-        
-        # Clear progress indicators
-        progress_bar.empty()
-        status_text.empty()
-        
-        return True
-        
-    except Exception as e:
-        st.error(f"❌ Initialization failed: {str(e)}")
-        progress_bar.empty()
-        status_text.empty()
-        return False
+        try:
+            # Step 1: Initialize Pinecone with timeout
+            status_text.text("🔧 Connecting to database...")
+            progress_bar.progress(20)
+            
+            pc = Pinecone(api_key=PINECONE_API_KEY)
+            
+            # Step 2: Load embeddings
+            status_text.text("🧠 Loading AI model...")
+            progress_bar.progress(40)
+            
+            embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True, 'batch_size': 32}
+            )
+            
+            # Step 3: Initialize vectorstore
+            status_text.text("📚 Connecting to knowledge base...")
+            progress_bar.progress(60)
+            
+            index_name = "medical-chatbot-index"
+            
+            # Quick check if index exists
+            existing_indexes = pc.list_indexes().names()
+            
+            if index_name not in existing_indexes:
+                status_text.text("⚠️ Creating index (one-time setup)...")
+                pc.create_index(
+                    name=index_name,
+                    dimension=384,
+                    metric='cosine',
+                    spec=ServerlessSpec(cloud='aws', region='us-east-1')
+                )
+                # Wait for index to be ready
+                max_wait = 60
+                wait_time = 0
+                while wait_time < max_wait:
+                    if index_name in pc.list_indexes().names():
+                        break
+                    time.sleep(2)
+                    wait_time += 2
+            
+            vectorstore = PineconeVectorStore(
+                index_name=index_name,
+                embedding=embeddings,
+                pinecone_api_key=PINECONE_API_KEY
+            )
+            
+            # Step 4: Load LLM
+            status_text.text("🚀 Initializing AI assistant...")
+            progress_bar.progress(80)
+            
+            llm = ChatGroq(
+                groq_api_key=GROQ_API_KEY,
+                model_name="llama-3.3-70b-versatile",
+                temperature=0.7,
+                max_tokens=512,
+                timeout=30
+            )
+            
+            # Create QA chain
+            status_text.text("✅ Finalizing setup...")
+            progress_bar.progress(95)
+            
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=llm,
+                chain_type="stuff",
+                retriever=vectorstore.as_retriever(
+                    search_kwargs={"k": 3}
+                ),
+                return_source_documents=True
+            )
+            
+            st.session_state.qa_chain = qa_chain
+            st.session_state.initialization_done = True
+            
+            progress_bar.progress(100)
+            status_text.text("✅ Ready to chat!")
+            time.sleep(0.5)
+            
+            return qa_chain
+            
+        except Exception as e:
+            st.error(f"❌ Initialization failed: {str(e)}")
+            st.info("💡 **Troubleshooting tips:**\n"
+                   "- Check your API keys in .env file\n"
+                   "- Verify Pinecone index exists\n"
+                   "- Check internet connection\n"
+                   "- Try refreshing the page")
+            return None
+        finally:
+            progress_container.empty()
 
 # Function to create new chat
 def create_new_chat():
@@ -277,7 +268,13 @@ with st.sidebar:
         st.info("No chat history yet. Start a new chat!")
     
     st.markdown("---")
-    st.markdown("#### 📊 Current Chat Stats")
+    st.markdown("#### 📊 Stats")
+    
+    if st.session_state.initialization_done:
+        st.success("✅ AI Ready")
+    else:
+        st.warning("⏳ AI will load on first message")
+    
     current_messages = get_current_messages()
     msg_count = len(current_messages)
     user_msgs = len([m for m in current_messages if m["role"] == "user"])
@@ -314,13 +311,6 @@ with st.sidebar:
 # Main content
 st.markdown("<h1>🏥 MediBot AI - Your Medical Assistant</h1>", unsafe_allow_html=True)
 
-# Initialize app if not done
-if not st.session_state.initialization_done:
-    if not initialize_app():
-        st.error("⚠️ Failed to initialize the application. Please refresh the page or check your API keys.")
-        st.stop()
-    st.rerun()
-
 # Create initial chat if none exists
 if st.session_state.current_chat_id is None:
     create_new_chat()
@@ -337,10 +327,18 @@ if len(current_messages) == 0:
             Feel free to ask about symptoms, conditions, treatments, or general health information.
         </p>
         <p style="color: #666; font-size: 14px; margin-bottom: 0;">
-            💡 <strong>Tip:</strong> Be specific with your questions for more accurate responses.
+            💡 <strong>Tip:</strong> The AI will initialize when you send your first message (takes ~10-15 seconds).
         </p>
     </div>
     """, unsafe_allow_html=True)
+    
+    if not st.session_state.initialization_done:
+        st.markdown("""
+        <div class="warning-box">
+            <strong>⚡ Fast Load Mode:</strong> The AI assistant will load when you send your first message. 
+            This makes the app open instantly!
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("### 🔍 Try asking:")
     col1, col2, col3 = st.columns(3)
@@ -379,6 +377,17 @@ else:
 
 # Process user input
 if prompt:
+    # Trigger lazy loading on first message
+    if not st.session_state.lazy_load_triggered:
+        st.session_state.lazy_load_triggered = True
+    
+    # Initialize if needed
+    qa_chain = lazy_init_components()
+    
+    if qa_chain is None and not st.session_state.initialization_done:
+        st.error("⚠️ Could not initialize the AI. Please check your API keys and try again.")
+        st.stop()
+    
     if len(current_messages) == 0:
         update_chat_title(st.session_state.current_chat_id, prompt)
     
@@ -414,6 +423,7 @@ if prompt:
             except Exception as e:
                 error_msg = f"😔 Sorry, I encountered an error: {str(e)}"
                 st.error(error_msg)
+                st.info("💡 Try:\n- Rephrasing your question\n- Checking your internet connection\n- Refreshing the page if the error persists")
                 current_messages.append({"role": "assistant", "content": error_msg})
 
 # Footer
