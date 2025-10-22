@@ -1,26 +1,17 @@
-streamlit==1.32.0
-python-dotenv==1.0.1
-pypdf==4.3.1
-numpy==1.26.4
-tiktoken==0.7.0
-
-# Pinecone
-pinecone-client==3.2.2
-
-# Langchain packages
-langchain==0.1.20
-langchain-core==0.1.52
-langchain-text-splitters==0.0.1
-langchain-community==0.0.38
-langchain-pinecone==0.0.1
-langchain-groq==0.1.5
-
-# HuggingFace and transformers
-sentence-transformers==2.7.0
-transformers==4.40.0
-huggingface-hub==0.22.0
-torch==2.3.0
-
-# Pydantic
-pydantic==2.7.0
-pydantic-core==2.18.0
+streamlit
+python-dotenv
+pypdf
+numpy
+tiktoken
+pinecone-client
+langchain
+langchain-core
+langchain-text-splitters
+langchain-community
+langchain-pinecone
+langchain-groq
+sentence-transformers
+transformers
+huggingface-hub
+torch
+pydantic
