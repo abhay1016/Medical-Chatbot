@@ -7,7 +7,7 @@ tiktoken==0.7.0
 # Pinecone
 pinecone-client==3.2.2
 
-# Langchain packages - CORRECTED VERSIONS
+# Langchain packages
 langchain==0.1.20
 langchain-core==0.1.52
 langchain-text-splitters==0.0.1
